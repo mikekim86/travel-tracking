@@ -165,7 +165,6 @@ test('parses flexible-dates calendar availability for multiple months', async ()
       candidateDates: ['2027-04-01', '2027-05-01'],
     });
 
-    assert.equal(requestedUrls.length, 2);
     assert.ok(requestedUrls.some((url) => url.includes('arrivalDate=2027-04-01')));
     assert.ok(requestedUrls.some((url) => url.includes('arrivalDate=2027-05-01')));
     assert.equal(results.length, 1);

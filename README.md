@@ -12,6 +12,7 @@ Open the dashboard at `http://127.0.0.1:3000/`.
 
 For hotel targets, you can store a public Hilton reservation URL. The app will try the public search flow first using that URL.
 Use the dashboard's `Alert contacts` panel to add the WhatsApp numbers that should receive alerts. If no saved contacts exist, the app falls back to `WHATSAPP_TO`.
+For Hilton flexible-date scans, Safari browser rendering is used when available. On macOS, enable `Allow Remote Automation` in Safari's Develop menu / Settings so the app can read the rendered award calendar; if that setting is not enabled, the app falls back to the raw fetch path.
 
 ## Test
 

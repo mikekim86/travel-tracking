@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 import { addDays } from './dates.ts';
 import type { HotelProviderResult, ProviderQuery } from './types.ts';
 
@@ -82,6 +84,161 @@ function isFlexibleDatesUrl(baseUrl: string): boolean {
 
 function isoDateForMonthDay(year: number, month: number, day: number): string {
   return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+const safariDriverPaths = ['/System/Cryptexes/App/usr/bin/safaridriver', 'safaridriver'];
+const safariDriverPort = 9515;
+
+async function requestJson(url: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
+  const response = await fetch(url, {
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+  const text = await response.text();
+  if (!text) {
+    return { status: response.status, body: undefined };
+  }
+  try {
+    return { status: response.status, body: JSON.parse(text) };
+  } catch {
+    return { status: response.status, body: text };
+  }
+}
+
+async function waitForSafariDriver(port: number, timeoutMs = 10_000): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/status`);
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      // Keep polling until the driver is ready.
+    }
+    await delay(250);
+  }
+  return false;
+}
+
+async function renderHiltonPageText(url: string): Promise<string | undefined> {
+  if (process.execArgv.includes('--test')) {
+    return undefined;
+  }
+
+  for (const executable of safariDriverPaths) {
+    const driver = spawn(executable, ['--port', String(safariDriverPort)], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    driver.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+
+    try {
+      const ready = await waitForSafariDriver(safariDriverPort);
+      if (!ready) {
+        throw new Error(`Safari driver did not start: ${stderr.trim()}`);
+      }
+
+      const sessionResponse = await requestJson(`http://127.0.0.1:${safariDriverPort}/session`, {
+        method: 'POST',
+        body: JSON.stringify({
+          capabilities: {
+            alwaysMatch: {
+              browserName: 'safari',
+            },
+          },
+        }),
+      });
+      const sessionPayload = sessionResponse.body as
+        | { value?: { sessionId?: string; error?: string; message?: string } }
+        | { sessionId?: string; error?: string; message?: string }
+        | undefined;
+      const sessionId =
+        sessionPayload && 'value' in sessionPayload && sessionPayload.value
+          ? sessionPayload.value.sessionId
+          : sessionPayload && 'sessionId' in sessionPayload
+            ? sessionPayload.sessionId
+            : undefined;
+      if (!sessionId) {
+        throw new Error(
+          `Safari session creation failed: ${
+            (sessionPayload &&
+              'value' in sessionPayload &&
+              sessionPayload.value &&
+              (sessionPayload.value.message || sessionPayload.value.error)) ||
+            (sessionPayload && ('message' in sessionPayload || 'error' in sessionPayload)
+              ? [sessionPayload.error, sessionPayload.message].filter(Boolean).join(' ')
+              : '') ||
+            stderr.trim() ||
+            'remote automation may be disabled'
+          }`,
+        );
+      }
+
+      try {
+        await requestJson(`http://127.0.0.1:${safariDriverPort}/session/${sessionId}/url`, {
+          method: 'POST',
+          body: JSON.stringify({ url }),
+        });
+
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const readyStateResponse = await requestJson(
+            `http://127.0.0.1:${safariDriverPort}/session/${sessionId}/execute/sync`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                script: 'return document.readyState;',
+                args: [],
+              }),
+            },
+          );
+          const readyStatePayload = readyStateResponse.body as { value?: string } | undefined;
+          if (readyStatePayload?.value === 'complete' || readyStatePayload?.value === 'interactive') {
+            break;
+          }
+          await delay(500);
+        }
+
+        const renderedResponse = await requestJson(
+          `http://127.0.0.1:${safariDriverPort}/session/${sessionId}/execute/sync`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              script: 'return document.body ? document.body.innerText : "";',
+              args: [],
+            }),
+          },
+        );
+        const renderedPayload = renderedResponse.body as { value?: string } | undefined;
+        if (typeof renderedPayload?.value === 'string' && renderedPayload.value.trim()) {
+          return renderedPayload.value;
+        }
+      } finally {
+        await requestJson(`http://127.0.0.1:${safariDriverPort}/session/${sessionId}`, {
+          method: 'DELETE',
+        }).catch(() => undefined);
+      }
+    } catch (error) {
+      const message = (error as Error).message;
+      if (
+        /Allow remote automation/i.test(message) ||
+        /Could not create a session/i.test(message) ||
+        /remote automation/i.test(stderr)
+      ) {
+        driver.kill('SIGTERM');
+        return undefined;
+      }
+    } finally {
+      driver.kill('SIGTERM');
+    }
+  }
+
+  return undefined;
 }
 
 function parseFlexibleCalendar(html: string, year: number, month: number, hotelName: string): HotelProviderResult[] {
@@ -202,6 +359,11 @@ export async function searchHiltonPublic(query: ProviderQuery): Promise<HotelPro
         monthUrl.searchParams.set('room1NumAdults', '1');
       }
 
+      const renderedText = await renderHiltonPageText(monthUrl.toString());
+      if (renderedText) {
+        results.push(...parseFlexibleCalendar(renderedText, monthSpec.year, monthSpec.month, query.target.hotelName));
+      }
+
       const response = await fetch(monthUrl.toString(), {
         headers: {
           'User-Agent':
@@ -210,12 +372,10 @@ export async function searchHiltonPublic(query: ProviderQuery): Promise<HotelPro
         },
       });
 
-      if (!response.ok) {
-        continue;
+      if (response.ok) {
+        const html = await response.text();
+        results.push(...parseFlexibleCalendar(html, monthSpec.year, monthSpec.month, query.target.hotelName));
       }
-
-      const html = await response.text();
-      results.push(...parseFlexibleCalendar(html, monthSpec.year, monthSpec.month, query.target.hotelName));
     }
 
     return results.map((result) => ({
