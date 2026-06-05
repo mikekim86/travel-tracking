@@ -175,3 +175,50 @@ test('parses flexible-dates calendar availability for multiple months', async ()
     globalThis.fetch = originalFetch;
   }
 });
+
+test('parses rendered flexible-dates award cells with points per night text', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    const html = `
+      <html>
+        <body>
+          <h1>March 2027</h1>
+          <div>5 - 10</div>
+          <div>1,117,000</div>
+          <div>Points per night for 5 nights</div>
+          <div>Premium Room Rewards</div>
+          <div>28 - 2</div>
+          <div>5 night stay unavailable</div>
+        </body>
+      </html>
+    `;
+    return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html' } });
+  }) as typeof fetch;
+
+  try {
+    const results = await searchHiltonPublic({
+      target: {
+        id: 'hotel-1',
+        type: 'hotel',
+        providerId: 'hilton-public',
+        name: 'Waldorf Astoria Maldives Ithaafushi',
+        hotelName: 'Waldorf Astoria Maldives Ithaafushi',
+        maxPoints: 2000000,
+        publicSearchUrl:
+          'https://www.hilton.com/en/book/reservation/flexibledates/?ctyhocn=MLEONWA&arrivalDate=2027-02-12&departureDate=2027-02-16&redeemPts=true&room1NumAdults=1',
+        status: 'active',
+        datePreference: { kind: 'month', year: 2027, month: 3 },
+        createdAt: '2026-06-03T00:00:00.000Z',
+        updatedAt: '2026-06-03T00:00:00.000Z',
+        alertedFingerprints: [],
+      },
+      candidateDates: ['2027-03-05'],
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].date, '2027-03-05');
+    assert.equal(results[0].points, 1117000);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

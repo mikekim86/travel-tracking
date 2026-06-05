@@ -85,20 +85,26 @@ function isoDateForMonthDay(year: number, month: number, day: number): string {
 }
 
 function parseFlexibleCalendar(html: string, year: number, month: number, hotelName: string): HotelProviderResult[] {
-  const text = decodeHtmlEntities(html);
+  const text = decodeHtmlEntities(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const results: HotelProviderResult[] = [];
+  const seen = new Set<string>();
   const cellRegex = /(\d{1,2})\s*-\s*(\d{1,2})/g;
   let match: RegExpExecArray | null;
 
   while ((match = cellRegex.exec(text))) {
     const startDay = Number(match[1]);
-    const snippet = text.slice(match.index, Math.min(text.length, match.index + 260));
-    if (/unavailable/i.test(snippet)) {
+    const snippet = text.slice(match.index, Math.min(text.length, match.index + 1200));
+    if (/5 night stay unavailable/i.test(snippet) || /unavailable/i.test(snippet)) {
       continue;
     }
 
     const points = collectPointsFromText(snippet);
     for (const pointValue of points) {
+      const fingerprint = `${startDay}:${pointValue}`;
+      if (seen.has(fingerprint)) {
+        continue;
+      }
+      seen.add(fingerprint);
       results.push({
         providerId: 'hilton-public',
         kind: 'hotel',
@@ -113,6 +119,38 @@ function parseFlexibleCalendar(html: string, year: number, month: number, hotelN
         },
       });
     }
+  }
+
+  const renderedCellRegex =
+    /(\d{1,2})\s*-\s*(\d{1,2})([\s\S]{0,700}?)(\d[\d,]*)\s*Points?\s*per\s*night\s*for\s*5\s*nights?/gi;
+  while ((match = renderedCellRegex.exec(text))) {
+    const startDay = Number(match[1]);
+    const snippet = match[0];
+    if (/unavailable/i.test(snippet)) {
+      continue;
+    }
+    const pointValue = normalizePoints(match[4]);
+    if (!pointValue) {
+      continue;
+    }
+    const fingerprint = `${startDay}:${pointValue}`;
+    if (seen.has(fingerprint)) {
+      continue;
+    }
+    seen.add(fingerprint);
+    results.push({
+      providerId: 'hilton-public',
+      kind: 'hotel',
+      hotelName,
+      date: isoDateForMonthDay(year, month, startDay),
+      points: pointValue,
+      available: true,
+      title: 'Hilton flexible-date award rate',
+      details: `Flexible calendar availability for ${isoDateForMonthDay(year, month, startDay)}`,
+      raw: {
+        snippet,
+      },
+    });
   }
 
   return results;
