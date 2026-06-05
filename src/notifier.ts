@@ -1,7 +1,9 @@
 import type { Notifier } from './types.ts';
+import { log } from './logger.ts';
 
 export class ConsoleNotifier implements Notifier {
   async send(message: string): Promise<void> {
+    log('notifier', 'console message', { message });
     console.log(`[whatsapp] ${message}`);
   }
 }
@@ -18,6 +20,11 @@ export class MetaWhatsAppClient {
   }
 
   async sendTo(recipient: string, message: string): Promise<void> {
+    log('notifier', 'sending whatsapp message', {
+      recipient,
+      phoneNumberId: this.phoneNumberId,
+      apiVersion: this.apiVersion,
+    });
     const url = `https://graph.facebook.com/${this.apiVersion}/${this.phoneNumberId}/messages`;
     const response = await fetch(url, {
       method: 'POST',

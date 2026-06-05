@@ -9,6 +9,7 @@ import { PollingScheduler } from './scheduler.ts';
 import { RedemptionService } from './service.ts';
 import type { Notifier } from './types.ts';
 import { renderDashboardPage } from './ui.ts';
+import { log } from './logger.ts';
 
 export interface AppConfig {
   dataFile: string;
@@ -199,6 +200,7 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
+      log('http', 'request', { method: req.method, path: url.pathname });
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
         const state = await service.getState();
         const status = {
@@ -240,6 +242,7 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
       }
 
       if (req.method === 'POST' && url.pathname === '/test-message') {
+        log('http', 'test message requested');
         await notifier.send(testMessage);
         sendJson(res, 200, { sent: true, message: testMessage });
         return;
@@ -327,8 +330,10 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
       if (req.method === 'POST' && url.pathname === '/scan') {
         const payload = (await readBody(req)) as Record<string, unknown> | undefined;
         if (payload?.targetId && typeof payload.targetId === 'string') {
+          log('http', 'manual scan target', { targetId: payload.targetId });
           sendJson(res, 200, await service.scanTarget(payload.targetId));
         } else {
+          log('http', 'manual scan all');
           sendJson(res, 200, await service.scanAllTargets());
         }
         return;

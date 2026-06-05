@@ -12,6 +12,7 @@ import type {
 } from './types.ts';
 import { buildCandidateDates } from './matching.ts';
 import { JsonStore } from './store.ts';
+import { log } from './logger.ts';
 
 function now(): string {
   return new Date().toISOString();
@@ -76,11 +77,13 @@ export class RedemptionService {
     if (!target) {
       throw new Error('Target not found');
     }
+    log('service', 'scan target requested', { targetId, name: target.name, providerId: target.providerId });
     return this.scanOne(target);
   }
 
   async scanAllTargets(): Promise<ScanSummary[]> {
     const targets = await this.store.listTargets();
+    log('service', 'scan all requested', { targetCount: targets.length });
     const summaries: ScanSummary[] = [];
     for (const target of targets) {
       if (target.status !== 'active') {
@@ -119,6 +122,14 @@ export class RedemptionService {
     const startedAt = now();
     const scanId = randomUUID();
     const provider = this.providers.get(target.providerId);
+    log('service', 'scan start', {
+      scanId,
+      targetId: target.id,
+      name: target.name,
+      providerId: target.providerId,
+      type: target.type,
+      datePreference: target.datePreference,
+    });
 
     if (!provider) {
       const scan: ScanRecord = {
@@ -137,25 +148,70 @@ export class RedemptionService {
 
     try {
       const candidateDates = buildCandidateDates(target);
+      log('service', 'candidate dates built', {
+        scanId,
+        targetId: target.id,
+        candidateCount: candidateDates.length,
+        first: candidateDates[0],
+        last: candidateDates.at(-1),
+      });
       const results = await provider.search({ target, candidateDates });
+      log('service', 'provider returned results', {
+        scanId,
+        targetId: target.id,
+        resultCount: results.length,
+      });
       const matches: MatchRecord[] = [];
 
       for (const result of results) {
-        if (!isMatch(target, result)) {
+        const matched = isMatch(target, result);
+        log('service', 'evaluate result', {
+          scanId,
+          targetId: target.id,
+          resultDate: result.date,
+          resultPoints: result.points,
+          resultAvailable: result.available,
+          matched,
+        });
+        if (!matched) {
           continue;
         }
         const match = toMatchRecord(target, result);
         matches.push(match);
+        log('service', 'match found', {
+          scanId,
+          targetId: target.id,
+          fingerprint: match.fingerprint,
+          date: match.date,
+          points: match.points,
+        });
         if (!target.alertedFingerprints.includes(match.fingerprint)) {
+          log('service', 'sending alert', {
+            scanId,
+            targetId: target.id,
+            fingerprint: match.fingerprint,
+          });
           await this.notifier.send(chooseMatchMessage(target, match));
           target.alertedFingerprints = trimAlertHistory([
             ...target.alertedFingerprints,
             match.fingerprint,
           ]);
+        } else {
+          log('service', 'alert suppressed', {
+            scanId,
+            targetId: target.id,
+            fingerprint: match.fingerprint,
+          });
         }
       }
 
       const outcome = matches.length > 0 ? 'matched' : 'no_match';
+      log('service', 'scan complete', {
+        scanId,
+        targetId: target.id,
+        outcome,
+        matchCount: matches.length,
+      });
       const scan: ScanRecord = {
         id: scanId,
         targetId: target.id,
@@ -169,6 +225,11 @@ export class RedemptionService {
       return { targetId: target.id, outcome, matches };
     } catch (error) {
       const message = (error as Error).message;
+      log('service', 'scan error', {
+        scanId,
+        targetId: target.id,
+        error: message,
+      });
       const scan: ScanRecord = {
         id: scanId,
         targetId: target.id,
@@ -197,6 +258,11 @@ export class RedemptionService {
       lastScanError: error,
       alertedFingerprints: trimAlertHistory(target.alertedFingerprints),
     } as Target;
+    log('service', 'scan metadata updated', {
+      targetId: target.id,
+      outcome,
+      error,
+    });
     await this.store.upsertTarget(updated);
   }
 

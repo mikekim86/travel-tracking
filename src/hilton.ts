@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { addDays } from './dates.ts';
+import { log } from './logger.ts';
 import type { HotelProviderResult, ProviderQuery } from './types.ts';
 
 function pad(value: number): string {
@@ -148,10 +149,12 @@ async function renderHiltonPageText(
     return undefined;
   }
 
+  log('hilton', 'render start', { url, targetMonth });
   for (const executable of safariDriverPaths) {
     const driver = spawn(executable, ['--port', String(safariDriverPort)], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    log('hilton', 'safari driver spawn', { executable, port: safariDriverPort, pid: driver.pid });
     let stderr = '';
     driver.stderr.on('data', (chunk) => {
       stderr += String(chunk);
@@ -173,43 +176,52 @@ async function renderHiltonPageText(
           },
         }),
       });
-      const sessionPayload = sessionResponse.body as
-        | { value?: { sessionId?: string; error?: string; message?: string } }
-        | { sessionId?: string; error?: string; message?: string }
-        | undefined;
+      const sessionPayload = sessionResponse.body as unknown;
+      const sessionObject =
+        sessionPayload && typeof sessionPayload === 'object' ? (sessionPayload as Record<string, unknown>) : undefined;
+      const sessionValue =
+        sessionObject && sessionObject.value && typeof sessionObject.value === 'object'
+          ? (sessionObject.value as Record<string, unknown>)
+          : undefined;
       const sessionId =
-        sessionPayload && 'value' in sessionPayload && sessionPayload.value
-          ? sessionPayload.value.sessionId
-          : sessionPayload && 'sessionId' in sessionPayload
-            ? sessionPayload.sessionId
+        typeof sessionValue?.sessionId === 'string'
+          ? sessionValue.sessionId
+          : typeof sessionObject?.sessionId === 'string'
+            ? (sessionObject.sessionId as string)
             : undefined;
       if (!sessionId) {
         throw new Error(
           `Safari session creation failed: ${
-            (sessionPayload &&
-              'value' in sessionPayload &&
-              sessionPayload.value &&
-              (sessionPayload.value.message || sessionPayload.value.error)) ||
-            (sessionPayload && ('message' in sessionPayload || 'error' in sessionPayload)
-              ? [sessionPayload.error, sessionPayload.message].filter(Boolean).join(' ')
-              : '') ||
+            (typeof sessionValue?.message === 'string' && sessionValue.message) ||
+            (typeof sessionValue?.error === 'string' && sessionValue.error) ||
+            (typeof sessionObject?.message === 'string' && sessionObject.message) ||
+            (typeof sessionObject?.error === 'string' && sessionObject.error) ||
             stderr.trim() ||
             'remote automation may be disabled'
           }`,
         );
       }
+      log('hilton', 'safari session created', { sessionId });
 
       try {
         await requestJson(`http://127.0.0.1:${safariDriverPort}/session/${sessionId}/url`, {
           method: 'POST',
           body: JSON.stringify({ url }),
         });
+        log('hilton', 'navigated to url', { sessionId, url });
 
         if (targetMonth) {
           const targetYear = targetMonth.year;
           const targetMonthNumber = targetMonth.month;
           const shortLabel = formatMonthShort(targetYear, targetMonthNumber);
           const longLabel = formatMonthLong(targetYear, targetMonthNumber);
+          log('hilton', 'select month requested', {
+            sessionId,
+            targetYear,
+            targetMonthNumber,
+            shortLabel,
+            longLabel,
+          });
 
           for (let attempt = 0; attempt < 15; attempt += 1) {
             const buttonsResponse = await requestJson(
@@ -242,6 +254,13 @@ async function renderHiltonPageText(
                 button.aria.includes(longLabel),
             );
 
+            log('hilton', 'month button scan', {
+              sessionId,
+              attempt,
+              buttonCount: buttons?.length ?? 0,
+              found: Boolean(match),
+            });
+
             if (match) {
               if (!/border-primary|selected|active/i.test(match.cls)) {
                 await requestJson(
@@ -270,6 +289,11 @@ async function renderHiltonPageText(
                 const bodyText = String(
                   ((bodyResponse.body as { value?: string } | undefined)?.value ?? bodyResponse.body ?? ''),
                 );
+                log('hilton', 'month wait snapshot', {
+                  sessionId,
+                  waitAttempt,
+                  bodyPreview: bodyText.slice(0, 200),
+                });
                 if (bodyText.includes(longLabel) || bodyText.includes(shortLabel)) {
                   break;
                 }
@@ -312,8 +336,14 @@ async function renderHiltonPageText(
         );
         const renderedPayload = renderedResponse.body as { value?: string } | undefined;
         if (typeof renderedPayload?.value === 'string' && renderedPayload.value.trim()) {
+          log('hilton', 'rendered text captured', {
+            sessionId,
+            length: renderedPayload.value.length,
+            preview: renderedPayload.value.slice(0, 400),
+          });
           return renderedPayload.value;
         }
+        log('hilton', 'rendered text missing', { sessionId });
       } finally {
         await requestJson(`http://127.0.0.1:${safariDriverPort}/session/${sessionId}`, {
           method: 'DELETE',
@@ -321,6 +351,7 @@ async function renderHiltonPageText(
       }
     } catch (error) {
       const message = (error as Error).message;
+      log('hilton', 'render error', { message, stderr: stderr.slice(0, 500) });
       if (
         /Allow remote automation/i.test(message) ||
         /Could not create a session/i.test(message) ||
@@ -343,6 +374,12 @@ function parseFlexibleCalendar(html: string, year: number, month: number, hotelN
   const seen = new Set<string>();
   const cellRegex = /(\d{1,2})\s*-\s*(\d{1,2})/g;
   let match: RegExpExecArray | null;
+  log('hilton', 'parse flexible calendar', {
+    year,
+    month,
+    hotelName,
+    preview: text.slice(0, 600),
+  });
 
   while ((match = cellRegex.exec(text))) {
     const startDay = Number(match[1]);
@@ -370,6 +407,12 @@ function parseFlexibleCalendar(html: string, year: number, month: number, hotelN
         raw: {
           snippet,
         },
+      });
+      log('hilton', 'flex calendar result', {
+        year,
+        month,
+        day: startDay,
+        points: pointValue,
       });
     }
   }
@@ -404,8 +447,15 @@ function parseFlexibleCalendar(html: string, year: number, month: number, hotelN
         snippet,
       },
     });
+    log('hilton', 'flex calendar rendered result', {
+      year,
+      month,
+      day: startDay,
+      points: pointValue,
+    });
   }
 
+  log('hilton', 'parse complete', { year, month, resultCount: results.length });
   return results;
 }
 
@@ -446,6 +496,7 @@ export async function searchHiltonPublic(query: ProviderQuery): Promise<HotelPro
     const results: HotelProviderResult[] = [];
 
     for (const monthSpec of monthSpecs) {
+      log('hilton', 'search month start', { monthSpec });
       const monthUrl = new URL(baseUrl);
       const arrivalDate = isoDateForMonthDay(monthSpec.year, monthSpec.month, 1);
       monthUrl.searchParams.set('arrivalDate', arrivalDate);
@@ -458,6 +509,8 @@ export async function searchHiltonPublic(query: ProviderQuery): Promise<HotelPro
       const renderedText = await renderHiltonPageText(monthUrl.toString(), monthSpec);
       if (renderedText) {
         results.push(...parseFlexibleCalendar(renderedText, monthSpec.year, monthSpec.month, query.target.hotelName));
+      } else {
+        log('hilton', 'no rendered text for month', { monthSpec });
       }
 
       const response = await fetch(monthUrl.toString(), {
@@ -471,9 +524,12 @@ export async function searchHiltonPublic(query: ProviderQuery): Promise<HotelPro
       if (response.ok) {
         const html = await response.text();
         results.push(...parseFlexibleCalendar(html, monthSpec.year, monthSpec.month, query.target.hotelName));
+      } else {
+        log('hilton', 'raw fetch failed', { monthSpec, status: response.status });
       }
     }
 
+    log('hilton', 'search complete', { resultCount: results.length });
     return results.map((result) => ({
       ...result,
       providerId: query.target.providerId,
