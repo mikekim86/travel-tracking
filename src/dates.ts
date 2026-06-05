@@ -49,6 +49,22 @@ export function expandDatePreference(preference: DatePreference): string[] {
     return [...new Set(preference.dates.map(toIsoDate))].sort();
   }
 
+  if (preference.kind === 'months') {
+    const dates: string[] = [];
+    const seen = new Set<string>();
+    for (const monthSpec of preference.months) {
+      const totalDays = daysInMonth(monthSpec.year, monthSpec.month);
+      for (let day = 1; day <= totalDays; day += 1) {
+        const date = `${monthSpec.year}-${pad(monthSpec.month)}-${pad(day)}`;
+        if (!seen.has(date)) {
+          seen.add(date);
+          dates.push(date);
+        }
+      }
+    }
+    return dates.sort();
+  }
+
   if (preference.kind === 'range') {
     const start = toIsoDate(preference.startDate);
     const end = toIsoDate(preference.endDate);

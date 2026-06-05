@@ -21,6 +21,22 @@ test('expands month to all dates in the month', () => {
   assert.equal(dates.length, 28);
 });
 
+test('expands multiple months to all dates across all months', () => {
+  const dates = expandDatePreference({
+    kind: 'months',
+    months: [
+      { year: 2027, month: 4 },
+      { year: 2027, month: 5 },
+    ],
+  });
+
+  assert.equal(dates[0], '2027-04-01');
+  assert.equal(dates.at(-1), '2027-05-31');
+  assert.equal(dates.length, 61);
+  assert.ok(dates.includes('2027-04-30'));
+  assert.ok(dates.includes('2027-05-01'));
+});
+
 test('expands inclusive date ranges', () => {
   const dates = expandDatePreference({
     kind: 'range',

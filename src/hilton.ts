@@ -84,7 +84,7 @@ function isoDateForMonthDay(year: number, month: number, day: number): string {
   return `${year}-${pad(month)}-${pad(day)}`;
 }
 
-function parseFlexibleCalendar(html: string, year: number, month: number): HotelProviderResult[] {
+function parseFlexibleCalendar(html: string, year: number, month: number, hotelName: string): HotelProviderResult[] {
   const text = decodeHtmlEntities(html);
   const results: HotelProviderResult[] = [];
   const cellRegex = /(\d{1,2})\s*-\s*(\d{1,2})/g;
@@ -102,7 +102,7 @@ function parseFlexibleCalendar(html: string, year: number, month: number): Hotel
       results.push({
         providerId: 'hilton-public',
         kind: 'hotel',
-        hotelName: '',
+        hotelName,
         date: isoDateForMonthDay(year, month, startDay),
         points: pointValue,
         available: true,
@@ -116,6 +116,10 @@ function parseFlexibleCalendar(html: string, year: number, month: number): Hotel
   }
 
   return results;
+}
+
+function monthQueryList(targetMonths: { year: number; month: number }[] | { year: number; month: number }): { year: number; month: number }[] {
+  return Array.isArray(targetMonths) ? targetMonths : [targetMonths];
 }
 
 function withDates(baseUrl: string, arrivalDate: string): string {
@@ -143,25 +147,42 @@ export async function searchHiltonPublic(query: ProviderQuery): Promise<HotelPro
     return [];
   }
 
-  if (isFlexibleDatesUrl(baseUrl) && query.target.datePreference.kind === 'month') {
-    const response = await fetch(baseUrl, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
+  if (isFlexibleDatesUrl(baseUrl) && (query.target.datePreference.kind === 'month' || query.target.datePreference.kind === 'months')) {
+    const monthSpecs =
+      query.target.datePreference.kind === 'month'
+        ? [{ year: query.target.datePreference.year, month: query.target.datePreference.month }]
+        : monthQueryList(query.target.datePreference.months);
+    const results: HotelProviderResult[] = [];
 
-    if (!response.ok) {
-      return [];
+    for (const monthSpec of monthSpecs) {
+      const monthUrl = new URL(baseUrl);
+      const arrivalDate = isoDateForMonthDay(monthSpec.year, monthSpec.month, 1);
+      monthUrl.searchParams.set('arrivalDate', arrivalDate);
+      monthUrl.searchParams.set('departureDate', addDays(arrivalDate, 5));
+      monthUrl.searchParams.set('redeemPts', 'true');
+      if (!monthUrl.searchParams.get('room1NumAdults')) {
+        monthUrl.searchParams.set('room1NumAdults', '1');
+      }
+
+      const response = await fetch(monthUrl.toString(), {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const html = await response.text();
+      results.push(...parseFlexibleCalendar(html, monthSpec.year, monthSpec.month, query.target.hotelName));
     }
 
-    const html = await response.text();
-    const calendarResults = parseFlexibleCalendar(html, query.target.datePreference.year, query.target.datePreference.month);
-    return calendarResults.map((result) => ({
+    return results.map((result) => ({
       ...result,
       providerId: query.target.providerId,
-      hotelName: query.target.hotelName,
     }));
   }
 

@@ -67,6 +67,27 @@ function normalizeDatePreference(input: unknown): DatePreference {
   ) {
     return { kind: 'month', year: Number(candidate.year), month: Number(candidate.month) };
   }
+  if (candidate.kind === 'months' && Array.isArray(candidate.months)) {
+    const months = candidate.months
+      .filter(
+        (monthSpec) =>
+          monthSpec &&
+          typeof monthSpec === 'object' &&
+          Number.isInteger((monthSpec as Record<string, unknown>).year) &&
+          Number.isInteger((monthSpec as Record<string, unknown>).month),
+      )
+      .map((monthSpec) => {
+        const record = monthSpec as Record<string, unknown>;
+        return {
+          year: Number(record.year),
+          month: Number(record.month),
+        };
+      });
+    if (months.length === 0) {
+      throw new Error('Invalid months datePreference');
+    }
+    return { kind: 'months', months };
+  }
   if (
     candidate.kind === 'range' &&
     typeof candidate.startDate === 'string' &&
