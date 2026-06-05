@@ -86,6 +86,22 @@ function isoDateForMonthDay(year: number, month: number, day: number): string {
   return `${year}-${pad(month)}-${pad(day)}`;
 }
 
+function formatMonthShort(year: number, month: number): string {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
+function formatMonthLong(year: number, month: number): string {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
 const safariDriverPaths = ['/System/Cryptexes/App/usr/bin/safaridriver', 'safaridriver'];
 const safariDriverPort = 9515;
 
@@ -185,6 +201,84 @@ async function renderHiltonPageText(url: string): Promise<string | undefined> {
           method: 'POST',
           body: JSON.stringify({ url }),
         });
+
+        const urlMatch = url.match(/arrivalDate=(\d{4})-(\d{2})-\d{2}/);
+        if (urlMatch) {
+          const targetYear = Number(urlMatch[1]);
+          const targetMonth = Number(urlMatch[2]);
+          const shortLabel = formatMonthShort(targetYear, targetMonth);
+          const longLabel = formatMonthLong(targetYear, targetMonth);
+
+          for (let attempt = 0; attempt < 15; attempt += 1) {
+            const buttonsResponse = await requestJson(
+              `http://127.0.0.1:${safariDriverPort}/session/${sessionId}/execute/sync`,
+              {
+                method: 'POST',
+                body: JSON.stringify({
+                  script:
+                    'return [...document.querySelectorAll("button")].map((button, index) => ({ index, text: (button.innerText || "").trim(), aria: button.getAttribute("aria-label") || "", cls: button.className || "" }));',
+                  args: [],
+                }),
+              },
+            );
+            const buttonList = (buttonsResponse.body as
+              | { value?: Array<{ index: number; text: string; aria: string; cls: string }> }
+              | Array<{ index: number; text: string; aria: string; cls: string }>
+              | undefined) as Array<{ index: number; text: string; aria: string; cls: string }> | undefined;
+            const buttons = Array.isArray(buttonList)
+              ? buttonList
+              : (buttonsResponse.body as { value?: Array<{ index: number; text: string; aria: string; cls: string }> } | undefined)
+                  ?.value;
+
+            const match = (buttons ?? []).find(
+              (button) =>
+                button.text === shortLabel ||
+                button.text === longLabel ||
+                button.text.includes(shortLabel) ||
+                button.text.includes(longLabel) ||
+                button.aria.includes(shortLabel) ||
+                button.aria.includes(longLabel),
+            );
+
+            if (match) {
+              if (!/border-primary|selected|active/i.test(match.cls)) {
+                await requestJson(
+                  `http://127.0.0.1:${safariDriverPort}/session/${sessionId}/execute/sync`,
+                  {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      script: `const buttons = [...document.querySelectorAll("button")]; const button = buttons[${match.index}]; if (button) { button.click(); return true; } return false;`,
+                      args: [],
+                    }),
+                  },
+                );
+              }
+
+              for (let waitAttempt = 0; waitAttempt < 20; waitAttempt += 1) {
+                const bodyResponse = await requestJson(
+                  `http://127.0.0.1:${safariDriverPort}/session/${sessionId}/execute/sync`,
+                  {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      script: 'return document.body ? document.body.innerText : "";',
+                      args: [],
+                    }),
+                  },
+                );
+                const bodyText = String(
+                  ((bodyResponse.body as { value?: string } | undefined)?.value ?? bodyResponse.body ?? ''),
+                );
+                if (bodyText.includes(longLabel) || bodyText.includes(shortLabel)) {
+                  break;
+                }
+                await delay(250);
+              }
+              break;
+            }
+
+            await delay(250);
+          }
+        }
 
         for (let attempt = 0; attempt < 20; attempt += 1) {
           const readyStateResponse = await requestJson(

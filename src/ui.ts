@@ -9,6 +9,68 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
+function renderDatePreference(datePreference?: {
+  kind: string;
+  dates?: string[];
+  months?: Array<{ year: number; month: number }>;
+  year?: number;
+  month?: number;
+  startDate?: string;
+  endDate?: string;
+}): string {
+  if (!datePreference) {
+    return 'No date window';
+  }
+
+  if (datePreference.kind === 'exact') {
+    return `Exact dates: ${(datePreference.dates ?? []).join(', ')}`;
+  }
+
+  if (datePreference.kind === 'months') {
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return `Months: ${(datePreference.months ?? [])
+      .map((item) => `${monthNames[item.month - 1]} ${item.year}`)
+      .join(', ')}`;
+  }
+
+  if (datePreference.kind === 'month' && datePreference.year && datePreference.month) {
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return `Month: ${monthNames[datePreference.month - 1]} ${datePreference.year}`;
+  }
+
+  if (datePreference.kind === 'range') {
+    return `Date range: ${datePreference.startDate ?? ''} to ${datePreference.endDate ?? ''}`;
+  }
+
+  return 'Custom date window';
+}
+
 function renderTargetCard(target: {
   id: string;
   type: string;
@@ -43,6 +105,7 @@ function renderTargetCard(target: {
       </div>
       <p class="muted">${escapeHtml(target.providerId)}</p>
       <p class="detail">${escapeHtml(detail)}</p>
+      <p class="muted">${escapeHtml(renderDatePreference(target.datePreference))}</p>
       ${target.publicSearchUrl ? `<p class="muted url">${escapeHtml(target.publicSearchUrl)}</p>` : ''}
       <div class="mini-grid">
         <div><span>Last scan</span><strong>${escapeHtml(target.lastScannedAt ?? 'Never')}</strong></div>
