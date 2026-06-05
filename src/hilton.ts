@@ -1,6 +1,10 @@
 import { addDays } from './dates.ts';
 import type { HotelProviderResult, ProviderQuery } from './types.ts';
 
+function pad(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
 function normalizePoints(value: string): number | undefined {
   const cleaned = value.replace(/,/g, '').trim();
   if (!/^\d+$/.test(cleaned)) {
@@ -59,6 +63,61 @@ function collectCandidatePoints(html: string): number[] {
   return [...points].sort((a, b) => a - b);
 }
 
+function collectPointsFromText(text: string): number[] {
+  const points = new Set<number>();
+
+  for (const match of text.matchAll(/(\d[\d,]{2,})\s*points?\b/gi)) {
+    const parsed = normalizePoints(match[1]);
+    if (parsed) {
+      points.add(parsed);
+    }
+  }
+
+  return [...points].sort((a, b) => a - b);
+}
+
+function isFlexibleDatesUrl(baseUrl: string): boolean {
+  return baseUrl.includes('/flexibledates/');
+}
+
+function isoDateForMonthDay(year: number, month: number, day: number): string {
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+function parseFlexibleCalendar(html: string, year: number, month: number): HotelProviderResult[] {
+  const text = decodeHtmlEntities(html);
+  const results: HotelProviderResult[] = [];
+  const cellRegex = /(\d{1,2})\s*-\s*(\d{1,2})/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = cellRegex.exec(text))) {
+    const startDay = Number(match[1]);
+    const snippet = text.slice(match.index, Math.min(text.length, match.index + 260));
+    if (/unavailable/i.test(snippet)) {
+      continue;
+    }
+
+    const points = collectPointsFromText(snippet);
+    for (const pointValue of points) {
+      results.push({
+        providerId: 'hilton-public',
+        kind: 'hotel',
+        hotelName: '',
+        date: isoDateForMonthDay(year, month, startDay),
+        points: pointValue,
+        available: true,
+        title: 'Hilton flexible-date award rate',
+        details: `Flexible calendar availability for ${isoDateForMonthDay(year, month, startDay)}`,
+        raw: {
+          snippet,
+        },
+      });
+    }
+  }
+
+  return results;
+}
+
 function withDates(baseUrl: string, arrivalDate: string): string {
   const url = new URL(baseUrl);
   url.searchParams.set('arrivalDate', arrivalDate);
@@ -82,6 +141,28 @@ export async function searchHiltonPublic(query: ProviderQuery): Promise<HotelPro
   const baseUrl = query.target.publicSearchUrl;
   if (!baseUrl) {
     return [];
+  }
+
+  if (isFlexibleDatesUrl(baseUrl) && query.target.datePreference.kind === 'month') {
+    const response = await fetch(baseUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const html = await response.text();
+    const calendarResults = parseFlexibleCalendar(html, query.target.datePreference.year, query.target.datePreference.month);
+    return calendarResults.map((result) => ({
+      ...result,
+      providerId: query.target.providerId,
+      hotelName: query.target.hotelName,
+    }));
   }
 
   const results: HotelProviderResult[] = [];

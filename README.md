@@ -23,7 +23,7 @@ npm test
 
 - `PORT` - HTTP port, defaults to `3000`
 - `DATA_DIR` - storage directory, defaults to `./data`
-- `POLL_INTERVAL_HOURS` - scan cadence, defaults to `12`
+- `POLL_INTERVAL_HOURS` - scan cadence, defaults to `6`
 - `WHATSAPP_MODE` - `meta` or `console`, defaults to `console`
 - `WHATSAPP_PHONE_NUMBER_ID` - required for Meta mode
 - `WHATSAPP_ACCESS_TOKEN` - required for Meta mode

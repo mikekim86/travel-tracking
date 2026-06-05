@@ -335,7 +335,7 @@ export function parsePort(value: string | undefined, fallback: number): number {
 export function createDefaultConfig(): AppConfig {
   return {
     dataFile: process.env.DATA_DIR ? `${process.env.DATA_DIR}/state.json` : './data/state.json',
-    pollIntervalHours: parsePort(process.env.POLL_INTERVAL_HOURS, 12),
+    pollIntervalHours: parsePort(process.env.POLL_INTERVAL_HOURS, 6),
     whatsappMode: (process.env.WHATSAPP_MODE === 'meta' ? 'meta' : 'console') as 'meta' | 'console',
     whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
     whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN,
