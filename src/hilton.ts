@@ -140,7 +140,10 @@ async function waitForSafariDriver(port: number, timeoutMs = 10_000): Promise<bo
   return false;
 }
 
-async function renderHiltonPageText(url: string): Promise<string | undefined> {
+async function renderHiltonPageText(
+  url: string,
+  targetMonth?: { year: number; month: number },
+): Promise<string | undefined> {
   if (process.execArgv.includes('--test')) {
     return undefined;
   }
@@ -202,12 +205,11 @@ async function renderHiltonPageText(url: string): Promise<string | undefined> {
           body: JSON.stringify({ url }),
         });
 
-        const urlMatch = url.match(/arrivalDate=(\d{4})-(\d{2})-\d{2}/);
-        if (urlMatch) {
-          const targetYear = Number(urlMatch[1]);
-          const targetMonth = Number(urlMatch[2]);
-          const shortLabel = formatMonthShort(targetYear, targetMonth);
-          const longLabel = formatMonthLong(targetYear, targetMonth);
+        if (targetMonth) {
+          const targetYear = targetMonth.year;
+          const targetMonthNumber = targetMonth.month;
+          const shortLabel = formatMonthShort(targetYear, targetMonthNumber);
+          const longLabel = formatMonthLong(targetYear, targetMonthNumber);
 
           for (let attempt = 0; attempt < 15; attempt += 1) {
             const buttonsResponse = await requestJson(
@@ -453,7 +455,7 @@ export async function searchHiltonPublic(query: ProviderQuery): Promise<HotelPro
         monthUrl.searchParams.set('room1NumAdults', '1');
       }
 
-      const renderedText = await renderHiltonPageText(monthUrl.toString());
+      const renderedText = await renderHiltonPageText(monthUrl.toString(), monthSpec);
       if (renderedText) {
         results.push(...parseFlexibleCalendar(renderedText, monthSpec.year, monthSpec.month, query.target.hotelName));
       }
