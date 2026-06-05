@@ -9,6 +9,68 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
+function renderDatePreference(datePreference?: {
+  kind: string;
+  dates?: string[];
+  months?: Array<{ year: number; month: number }>;
+  year?: number;
+  month?: number;
+  startDate?: string;
+  endDate?: string;
+}): string {
+  if (!datePreference) {
+    return 'No date window';
+  }
+
+  if (datePreference.kind === 'exact') {
+    return `Exact dates: ${(datePreference.dates ?? []).join(', ')}`;
+  }
+
+  if (datePreference.kind === 'months') {
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return `Months: ${(datePreference.months ?? [])
+      .map((item) => `${monthNames[item.month - 1]} ${item.year}`)
+      .join(', ')}`;
+  }
+
+  if (datePreference.kind === 'month' && datePreference.year && datePreference.month) {
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return `Month: ${monthNames[datePreference.month - 1]} ${datePreference.year}`;
+  }
+
+  if (datePreference.kind === 'range') {
+    return `Date range: ${datePreference.startDate ?? ''} to ${datePreference.endDate ?? ''}`;
+  }
+
+  return 'Custom date window';
+}
+
 function renderTargetCard(target: {
   id: string;
   type: string;
@@ -43,6 +105,7 @@ function renderTargetCard(target: {
       </div>
       <p class="muted">${escapeHtml(target.providerId)}</p>
       <p class="detail">${escapeHtml(detail)}</p>
+      <p class="muted">${escapeHtml(renderDatePreference(target.datePreference))}</p>
       ${target.publicSearchUrl ? `<p class="muted url">${escapeHtml(target.publicSearchUrl)}</p>` : ''}
       <div class="mini-grid">
         <div><span>Last scan</span><strong>${escapeHtml(target.lastScannedAt ?? 'Never')}</strong></div>
@@ -101,7 +164,11 @@ function renderScanRow(scan: {
   `;
 }
 
-function renderState(state: AppState, status: { targets: number; activeTargets: number; scans: number; nextPollHours: number }): string {
+function renderState(
+  state: AppState,
+  status: { targets: number; activeTargets: number; scans: number; nextPollHours: number },
+  recentLogs: string[],
+): string {
   const active = state.targets.filter((target) => target.status === 'active').length;
   const matched = state.targets.filter((target) => target.lastScanOutcome === 'matched').length;
   const paused = state.targets.filter((target) => target.status === 'paused').length;
@@ -318,6 +385,18 @@ function renderState(state: AppState, status: { targets: number; activeTargets: 
           </table>
         </div>
       </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Debug</p>
+            <h2>Recent logs</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <pre class="log-view">${escapeHtml(recentLogs.length ? recentLogs.join('\n') : 'No logs yet.')}</pre>
+        </div>
+      </section>
     </div>
 
     <script>
@@ -530,7 +609,11 @@ function renderState(state: AppState, status: { targets: number; activeTargets: 
   `;
 }
 
-export function renderDashboardPage(state: AppState, status: { targets: number; activeTargets: number; scans: number; nextPollHours: number }): string {
+export function renderDashboardPage(
+  state: AppState,
+  status: { targets: number; activeTargets: number; scans: number; nextPollHours: number },
+  recentLogs: string[] = [],
+): string {
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -791,6 +874,17 @@ export function renderDashboardPage(state: AppState, status: { targets: number; 
         .table-wrap {
           overflow-x: auto;
         }
+        .log-view {
+          margin: 0;
+          white-space: pre-wrap;
+          font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+          max-height: 320px;
+          overflow: auto;
+          background: #0f172a;
+          color: #e2e8f0;
+          padding: 16px;
+          border-radius: 16px;
+        }
         .empty {
           color: var(--muted);
           text-align: center;
@@ -813,7 +907,7 @@ export function renderDashboardPage(state: AppState, status: { targets: number; 
       </style>
     </head>
     <body>
-      ${renderState(state, status)}
+      ${renderState(state, status, recentLogs)}
     </body>
   </html>`;
 }

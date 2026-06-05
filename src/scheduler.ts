@@ -1,4 +1,5 @@
 import type { RedemptionService } from './service.ts';
+import { log } from './logger.ts';
 
 export class PollingScheduler {
   private timer?: NodeJS.Timeout;
@@ -16,12 +17,15 @@ export class PollingScheduler {
       return;
     }
     this.running = true;
+    log('scheduler', 'started', { intervalMs: this.intervalMs, immediate });
 
     const tick = async (): Promise<void> => {
       if (!this.running) {
         return;
       }
+      log('scheduler', 'tick start');
       await this.service.scanAllTargets();
+      log('scheduler', 'tick end');
     };
 
     if (immediate) {
@@ -35,6 +39,7 @@ export class PollingScheduler {
 
   stop(): void {
     this.running = false;
+    log('scheduler', 'stopped');
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;

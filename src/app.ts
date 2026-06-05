@@ -9,6 +9,8 @@ import { PollingScheduler } from './scheduler.ts';
 import { RedemptionService } from './service.ts';
 import type { Notifier } from './types.ts';
 import { renderDashboardPage } from './ui.ts';
+import { log, readRecentLogs, setLogFilePath } from './logger.ts';
+import { dirname, join } from 'node:path';
 
 export interface AppConfig {
   dataFile: string;
@@ -66,6 +68,27 @@ function normalizeDatePreference(input: unknown): DatePreference {
     Number.isInteger(candidate.month)
   ) {
     return { kind: 'month', year: Number(candidate.year), month: Number(candidate.month) };
+  }
+  if (candidate.kind === 'months' && Array.isArray(candidate.months)) {
+    const months = candidate.months
+      .filter(
+        (monthSpec) =>
+          monthSpec &&
+          typeof monthSpec === 'object' &&
+          Number.isInteger((monthSpec as Record<string, unknown>).year) &&
+          Number.isInteger((monthSpec as Record<string, unknown>).month),
+      )
+      .map((monthSpec) => {
+        const record = monthSpec as Record<string, unknown>;
+        return {
+          year: Number(record.year),
+          month: Number(record.month),
+        };
+      });
+    if (months.length === 0) {
+      throw new Error('Invalid months datePreference');
+    }
+    return { kind: 'months', months };
   }
   if (
     candidate.kind === 'range' &&
@@ -165,6 +188,7 @@ function makeNotifier(config: AppConfig, store: JsonStore) {
 }
 
 export async function createTravelWatcherApp(config: AppConfig): Promise<TravelWatcherApp> {
+  setLogFilePath(join(dirname(config.dataFile), 'app.log'));
   const store = new JsonStore(config.dataFile);
   const providers = config.providers ?? new ProviderRegistry();
   if (!providers.get('hilton-public')) {
@@ -178,8 +202,10 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
+      log('http', 'request', { method: req.method, path: url.pathname });
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
         const state = await service.getState();
+        const recentLogs = await readRecentLogs(120);
         const status = {
           targets: state.targets.length,
           activeTargets: state.targets.filter((target) => target.status === 'active').length,
@@ -188,7 +214,7 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
         };
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(renderDashboardPage(state, status));
+        res.end(renderDashboardPage(state, status, recentLogs));
         return;
       }
 
@@ -219,6 +245,7 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
       }
 
       if (req.method === 'POST' && url.pathname === '/test-message') {
+        log('http', 'test message requested');
         await notifier.send(testMessage);
         sendJson(res, 200, { sent: true, message: testMessage });
         return;
@@ -306,8 +333,10 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
       if (req.method === 'POST' && url.pathname === '/scan') {
         const payload = (await readBody(req)) as Record<string, unknown> | undefined;
         if (payload?.targetId && typeof payload.targetId === 'string') {
+          log('http', 'manual scan target', { targetId: payload.targetId });
           sendJson(res, 200, await service.scanTarget(payload.targetId));
         } else {
+          log('http', 'manual scan all');
           sendJson(res, 200, await service.scanAllTargets());
         }
         return;
@@ -315,6 +344,11 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
 
       if (req.method === 'GET' && url.pathname === '/scans') {
         sendJson(res, 200, await service.getScans());
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/logs') {
+        sendJson(res, 200, { lines: await readRecentLogs(200) });
         return;
       }
 
@@ -335,7 +369,7 @@ export function parsePort(value: string | undefined, fallback: number): number {
 export function createDefaultConfig(): AppConfig {
   return {
     dataFile: process.env.DATA_DIR ? `${process.env.DATA_DIR}/state.json` : './data/state.json',
-    pollIntervalHours: parsePort(process.env.POLL_INTERVAL_HOURS, 12),
+    pollIntervalHours: parsePort(process.env.POLL_INTERVAL_HOURS, 6),
     whatsappMode: (process.env.WHATSAPP_MODE === 'meta' ? 'meta' : 'console') as 'meta' | 'console',
     whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
     whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN,

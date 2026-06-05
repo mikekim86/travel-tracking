@@ -15,6 +15,10 @@ export type DatePreference =
       month: number;
     }
   | {
+      kind: 'months';
+      months: { year: number; month: number }[];
+    }
+  | {
       kind: 'range';
       startDate: string;
       endDate: string;
