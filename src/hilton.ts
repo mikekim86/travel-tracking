@@ -8,6 +8,10 @@ function pad(value: number): string {
   return String(value).padStart(2, '0');
 }
 
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 function normalizePoints(value: string): number | undefined {
   const cleaned = value.replace(/,/g, '').trim();
   if (!/^\d+$/.test(cleaned)) {
@@ -246,12 +250,12 @@ async function renderHiltonPageText(
 
             const match = (buttons ?? []).find(
               (button) =>
-                button.text === shortLabel ||
-                button.text === longLabel ||
-                button.text.includes(shortLabel) ||
-                button.text.includes(longLabel) ||
-                button.aria.includes(shortLabel) ||
-                button.aria.includes(longLabel),
+                normalizeWhitespace(button.text) === shortLabel ||
+                normalizeWhitespace(button.text) === longLabel ||
+                normalizeWhitespace(button.text).includes(shortLabel) ||
+                normalizeWhitespace(button.text).includes(longLabel) ||
+                normalizeWhitespace(button.aria).includes(shortLabel) ||
+                normalizeWhitespace(button.aria).includes(longLabel),
             );
 
             log('hilton', 'month button scan', {
@@ -260,6 +264,16 @@ async function renderHiltonPageText(
               buttonCount: buttons?.length ?? 0,
               found: Boolean(match),
             });
+            if (!match && attempt === 14) {
+              log('hilton', 'month button candidates', {
+                sessionId,
+                buttons: (buttons ?? []).slice(0, 20).map((button) => ({
+                  text: normalizeWhitespace(button.text),
+                  aria: normalizeWhitespace(button.aria),
+                  cls: button.cls,
+                })),
+              });
+            }
 
             if (match) {
               if (!/border-primary|selected|active/i.test(match.cls)) {
@@ -324,6 +338,26 @@ async function renderHiltonPageText(
           await delay(500);
         }
 
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const loadingResponse = await requestJson(
+            `http://127.0.0.1:${safariDriverPort}/session/${sessionId}/execute/sync`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                script: 'return document.body ? document.body.innerText : "";',
+                args: [],
+              }),
+            },
+          );
+          const loadingPayload = loadingResponse.body as { value?: string } | undefined;
+          const loadingText = typeof loadingPayload?.value === 'string' ? loadingPayload.value : '';
+          if (!loadingText.includes('Loading Prices')) {
+            break;
+          }
+          log('hilton', 'waiting for price load', { sessionId, attempt });
+          await delay(500);
+        }
+
         const renderedResponse = await requestJson(
           `http://127.0.0.1:${safariDriverPort}/session/${sessionId}/execute/sync`,
           {
@@ -369,7 +403,7 @@ async function renderHiltonPageText(
 }
 
 function parseFlexibleCalendar(html: string, year: number, month: number, hotelName: string): HotelProviderResult[] {
-  const text = decodeHtmlEntities(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const text = normalizeWhitespace(decodeHtmlEntities(html).replace(/<[^>]+>/g, ' '));
   const results: HotelProviderResult[] = [];
   const seen = new Set<string>();
   const cellRegex = /(\d{1,2})\s*-\s*(\d{1,2})/g;

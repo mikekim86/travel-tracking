@@ -9,7 +9,8 @@ import { PollingScheduler } from './scheduler.ts';
 import { RedemptionService } from './service.ts';
 import type { Notifier } from './types.ts';
 import { renderDashboardPage } from './ui.ts';
-import { log } from './logger.ts';
+import { log, readRecentLogs, setLogFilePath } from './logger.ts';
+import { dirname, join } from 'node:path';
 
 export interface AppConfig {
   dataFile: string;
@@ -187,6 +188,7 @@ function makeNotifier(config: AppConfig, store: JsonStore) {
 }
 
 export async function createTravelWatcherApp(config: AppConfig): Promise<TravelWatcherApp> {
+  setLogFilePath(join(dirname(config.dataFile), 'app.log'));
   const store = new JsonStore(config.dataFile);
   const providers = config.providers ?? new ProviderRegistry();
   if (!providers.get('hilton-public')) {
@@ -203,6 +205,7 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
       log('http', 'request', { method: req.method, path: url.pathname });
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
         const state = await service.getState();
+        const recentLogs = await readRecentLogs(120);
         const status = {
           targets: state.targets.length,
           activeTargets: state.targets.filter((target) => target.status === 'active').length,
@@ -211,7 +214,7 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
         };
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(renderDashboardPage(state, status));
+        res.end(renderDashboardPage(state, status, recentLogs));
         return;
       }
 
@@ -341,6 +344,11 @@ export async function createTravelWatcherApp(config: AppConfig): Promise<TravelW
 
       if (req.method === 'GET' && url.pathname === '/scans') {
         sendJson(res, 200, await service.getScans());
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/logs') {
+        sendJson(res, 200, { lines: await readRecentLogs(200) });
         return;
       }
 

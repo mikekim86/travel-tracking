@@ -29,11 +29,13 @@ test('renders the dashboard shell and target data', () => {
     activeTargets: 1,
     scans: 0,
     nextPollHours: 12,
-  });
+  }, ['2026-06-05T00:00:00.000Z [hilton] test log']);
 
   assert.match(html, /Travel Redemption Watcher/);
   assert.match(html, /Award tracking dashboard/);
   assert.match(html, /Hilton Waikiki/);
   assert.match(html, /Scan all now/);
   assert.match(html, /Alert contacts/);
+  assert.match(html, /Recent logs/);
+  assert.match(html, /\[hilton\] test log/);
 });
